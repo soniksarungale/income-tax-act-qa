@@ -62,3 +62,12 @@ def test_omitted_sections_and_schedules(act, by_number):
 
 def test_chunks_fit_the_embedding_window(act):
     assert max(len(c.text) for p in act.provisions for c in p.chunks) <= 1800
+
+
+def test_top_level_clauses_carry_the_section_lead_in(by_number):
+    # Without it "(a) a sum equal to thirty per cent of the annual value" does not say what it is
+    # deducted from.
+    clause = next(c for c in by_number["24"].chunks if c.ref == "Section 24(a)")
+    assert "shall be computed after making the following deductions" in clause.context
+    definition = next(c for c in by_number["2"].chunks if c.ref == "Section 2(42)")
+    assert "unless the context otherwise requires" in definition.context

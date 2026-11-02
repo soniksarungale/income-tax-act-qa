@@ -605,7 +605,7 @@ def build_chunks(p: Provision, markers: list[Marker]) -> list[Chunk]:
     page_markers = [m for m in markers if p.page_start <= m.page <= p.page_end]
     chunks = []
     for anchor, lines in groups:
-        parent_lead = leads.get(anchor[:-1], "") if len(anchor) > 1 else ""
+        parent_lead = leads.get(anchor[:-1], "") if anchor else ""
         context = " ".join(part for part in [p.citation_base, p.heading, p.chapter_title or "", parent_lead] if part)
         chunks.append(
             Chunk(
