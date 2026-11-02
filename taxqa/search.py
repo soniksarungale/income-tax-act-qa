@@ -13,7 +13,7 @@ CANDIDATES = 40
 MAX_TERM_SHARE = 0.2
 # A long question about one topic otherwise fills every slot with one section (80EE for a home-loan
 # question) and pushes out the sections that actually answer it (23 and 24).
-PER_SECTION = 3
+PER_SECTION = 4
 # Provisos and Explanations change the rule they follow, so the answer step sees more than the hits:
 # short provisions whole, longer ones as the hits plus the text they hang from.
 WHOLE_PROVISION_CHARS = 6000  # about 90% of provisions
@@ -39,6 +39,17 @@ ABBREVIATIONS = {
 # Matched only in capitals where the lower-case form is an English word ("pan", "mat", "ay").
 _ABBREVIATION = re.compile(r"\b(" + "|".join(ABBREVIATIONS) + r")\b")
 _ABBREVIATION_ANY_CASE = re.compile(r"\b(tds|tcs|hra|ltcg|stcg|huf|nri|itr|cbdt|stt|nps|epf)\b", re.I)
+
+# Everyday words for things the Act names differently. Without these, a question about gifts never
+# reaches section 56(2)(x), which speaks only of sums "received without consideration".
+PLAIN_TERMS = [
+    (re.compile(r"\bgifts?\b|\bgifted\b", re.I), "received without consideration"),
+    (re.compile(r"\b(?:home|housing) loans?\b", re.I), "borrowed capital"),
+    (re.compile(r"\b(?:rented|rent|let) out\b", re.I), "let"),
+    (re.compile(r"\bmistakes?\b|\berrors?\b", re.I), "omission or wrong statement"),
+    (re.compile(r"\bcrypto(?:currenc(?:y|ies)|s)?\b", re.I), "virtual digital asset"),
+    (re.compile(r"\bfixed deposits?\b|\bFDs?\b", re.I), "time deposit"),
+]
 
 
 @dataclass
@@ -70,7 +81,10 @@ def expand_abbreviations(question: str) -> str:
     def add(m: re.Match) -> str:
         return f"{m.group(0)} ({ABBREVIATIONS[m.group(0).upper()]})"
     question = _ABBREVIATION.sub(add, question)
-    return _ABBREVIATION_ANY_CASE.sub(lambda m: m.group(0) if m.group(0).isupper() else add(m), question)
+    question = _ABBREVIATION_ANY_CASE.sub(lambda m: m.group(0) if m.group(0).isupper() else add(m), question)
+    for pattern, act_term in PLAIN_TERMS:
+        question = pattern.sub(lambda m: f"{m.group(0)} ({act_term})", question, count=1)
+    return question
 
 
 def section_refs(question: str) -> list[SectionRef]:
@@ -119,7 +133,7 @@ def _hit(row: dict) -> Hit:
                row["text"], row["context"], row["amended_by"], row["provision_id"], row["path"])
 
 
-def search(question: str, limit: int = 12) -> list[Hit]:
+def search(question: str, limit: int = 16) -> list[Hit]:
     named = section_refs(question)
     question = expand_abbreviations(question)
     vector = embed_query(question)

@@ -29,3 +29,10 @@ def test_abbreviations_are_spelled_out_as_the_act_words_them():
 def test_abbreviations_that_are_english_words_need_capitals():
     assert expand_abbreviations("a pan or a mat") == "a pan or a mat"
     assert expand_abbreviations("PAN") == "PAN (permanent account number)"
+
+
+def test_everyday_words_get_the_acts_terms():
+    assert expand_abbreviations("Is a gift from my uncle taxable?") == \
+        "Is a gift (received without consideration) from my uncle taxable?"
+    assert expand_abbreviations("I rented out my flat") == "I rented out (let) my flat"
+    assert expand_abbreviations("loss on crypto") == "loss on crypto (virtual digital asset)"
