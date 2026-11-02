@@ -44,5 +44,7 @@ CREATE TABLE IF NOT EXISTS chunks (
 );
 
 CREATE INDEX IF NOT EXISTS chunks_tsv_idx ON chunks USING gin (tsv);
-CREATE INDEX IF NOT EXISTS chunks_embedding_idx ON chunks USING hnsw (embedding vector_cosine_ops);
+-- No approximate (HNSW) index on embedding: with ~8,500 chunks an exact scan takes ~40 ms, and the
+-- HNSW index at default settings missed more than half of the true top-40 neighbours in testing.
+DROP INDEX IF EXISTS chunks_embedding_idx;
 CREATE INDEX IF NOT EXISTS chunks_provision_idx ON chunks (provision_id);
