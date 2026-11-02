@@ -108,7 +108,7 @@ class Unit:
 
     @property
     def text(self) -> str:
-        return clean(" ".join(line.text for line in self.lines))
+        return join_lines(self.lines)
 
 
 @dataclass
@@ -175,6 +175,15 @@ class ParsedAct:
 def clean(text: str) -> str:
     text = text.replace("\xa0", " ").replace("[***]", "(omitted)")
     return re.sub(r"\s+", " ", text).strip()
+
+
+_LINE_BREAK_HYPHEN = re.compile(r"(?<=[A-Za-z])- (?=[a-z])")
+
+
+def join_lines(lines) -> str:
+    """Join visual lines into running text. A compound split at the end of a line ("sub-" / "section")
+    is rejoined; the Act hyphenates only compounds, never ordinary words, so the hyphen stays."""
+    return _LINE_BREAK_HYPHEN.sub("-", clean(" ".join(line.text for line in lines)))
 
 
 def read_lines(doc: pymupdf.Document) -> tuple[list[Line], list[Marker]]:
@@ -613,7 +622,7 @@ def build_chunks(p: Provision, markers: list[Marker]) -> list[Chunk]:
                 path=tuple(n[1:] for n in anchor),
                 page_start=lines[0].page,
                 page_end=lines[-1].page,
-                text=clean(" ".join(line.text for line in lines)),
+                text=join_lines(lines),
                 context=context,
                 amended_by=_amendments(lines, page_markers, p.notes),
             )

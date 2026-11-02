@@ -1,4 +1,4 @@
-from taxqa.parser import Line, Marker, Span, _Builder, place, render_ref
+from taxqa.parser import Line, Marker, Span, _Builder, join_lines, place, render_ref
 
 MARGIN = 27.6
 
@@ -146,3 +146,10 @@ def test_render_ref():
     assert render_ref("Section 24", ("2b", "~first proviso")) == "Section 24(b), first proviso"
     assert render_ref("Section 2", ("124", "3iia")) == "Section 2(24)(iia)"
     assert render_ref("Section 50AA", ("~Explanation", "3i")) == "Section 50AA, Explanation (i)"
+
+
+def test_compounds_split_at_line_end_are_rejoined():
+    rows = [Line(1, 10, [Span("referred to in sub-", 40, False, False)]),
+            Line(1, 20, [Span("section (2) and income-", 40, False, False)]),
+            Line(1, 30, [Span("tax payable — namely", 40, False, False)])]
+    assert join_lines(rows) == "referred to in sub-section (2) and income-tax payable — namely"
