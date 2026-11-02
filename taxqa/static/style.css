@@ -119,7 +119,17 @@ blockquote {
 .refs { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 .refs th, .refs td { border-top: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
 .refs th { color: var(--muted); font-weight: 600; }
-.refs td:last-child { white-space: nowrap; }
+.refs td:last-child { min-width: 38%; }
+
+/* Phones: one block per row instead of three squeezed columns. */
+@media (max-width: 640px) {
+  .refs thead { display: none; }
+  .refs tr, .refs td { display: block; }
+  .refs tr { border-top: 1px solid var(--line); padding: 6px 0; }
+  .refs td { border: 0; padding: 2px 0; }
+  .refs td:first-child { font-weight: 600; }
+  .example:first-of-type { max-width: 100%; }
+}
 
 .source { border-top: 1px solid var(--line); padding: 8px 0; font-size: 0.9rem; }
 .source summary { cursor: pointer; }
