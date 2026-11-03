@@ -4,7 +4,7 @@ import pytest
 
 from taxqa import answer as answer_module
 from taxqa import llm
-from taxqa.answer import answer, build_prompt, parse_reply, quote_found, verify
+from taxqa.answer import DraftReader, answer, answer_events, build_prompt, parse_reply, quote_found, verify
 from taxqa.search import Hit
 
 
@@ -74,13 +74,15 @@ def pipeline(monkeypatch):
     monkeypatch.setattr(answer_module, "expand", lambda hits, named: hits)
     replies = []
 
-    def complete(system, prompt):
+    def stream(system, prompt):
         reply = replies.pop(0)
         if isinstance(reply, Exception):
             raise reply
-        return llm.Completion(reply if isinstance(reply, str) else json.dumps(reply), "test-model", 5)
+        text = reply if isinstance(reply, str) else json.dumps(reply)
+        # Delivered in small pieces, as a provider streams it.
+        return llm.Stream(lambda meta: iter([text[i:i + 7] for i in range(0, len(text), 7)]), "test-model")
 
-    monkeypatch.setattr(llm, "complete", complete)
+    monkeypatch.setattr(llm, "stream", stream)
     return replies
 
 
@@ -129,3 +131,37 @@ def test_provider_errors_are_reported(pipeline):
     pipeline.append(llm.LLMBusy("Too many questions are queued"))
     a = answer("q")
     assert a.status == "error" and "queued" in a.message
+
+
+def test_events_stream_the_draft_then_the_verified_answer(pipeline):
+    pipeline.append({"answerable": True, "not_covered": "Nothing else.",
+                     "claims": [claim("Yes, 30% is deducted.", ["S2"], "a sum equal to thirty per cent"),
+                                claim("Interest is deductible.", ["S3"], "the amount of any interest payable")]})
+    events = list(answer_events("Can I deduct 30%?"))
+    assert events[0]["type"] == "retrieved" and events[0]["extracts"] == 3
+    drafts = [e for e in events if e["type"] == "draft"]
+    assert len(drafts) > 2  # the text arrived in pieces, not at the end
+    text = {}
+    for e in drafts:
+        key = (e["field"], e.get("claim"))
+        text[key] = text.get(key, "") + e["text"]
+    assert text == {("statement", 0): "Yes, 30% is deducted.", ("statement", 1): "Interest is deductible.",
+                    ("not_covered", None): "Nothing else."}
+    assert events[-1]["type"] == "done" and events[-1]["answer"].status == "answered"
+
+
+def test_a_retry_restarts_the_draft(pipeline):
+    pipeline.extend(['{"claims": [{"statement": "half', {"answerable": False, "claims": []}])
+    types = [e["type"] for e in answer_events("q")]
+    assert "restart" in types and types.index("restart") > types.index("draft")
+    assert types[-1] == "done"
+
+
+def test_draft_reader_waits_for_complete_escapes():
+    reader = DraftReader()
+    assert reader.feed('{"claims": [{"statement": "Section \\') == [
+        {"type": "draft", "field": "statement", "text": "Section ", "claim": 0}]
+    assert reader.feed('u00e9 \\"24\\""') == [
+        {"type": "draft", "field": "statement", "text": "é \"24\"", "claim": 0}]
+    # Escaped quotes inside a string are text, not a new field.
+    assert reader.feed(', "quote": "the \\"statement\\": no"}]') == []

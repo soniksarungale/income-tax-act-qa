@@ -1,5 +1,6 @@
 """Web app: uvicorn taxqa.app:app"""
 
+import json
 import logging
 import threading
 import time
@@ -7,12 +8,12 @@ from collections import defaultdict, deque
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from taxqa import llm
-from taxqa.answer import Answer, answer, document
+from taxqa.answer import Answer, answer, answer_events, document
 from taxqa.config import settings
 from taxqa.confidence import score
 
@@ -72,14 +73,43 @@ def to_json(a: Answer) -> dict:
     }
 
 
-@app.post("/api/ask")
-def ask(body: Question, request: Request) -> dict:
+def _check_rate(request: Request) -> None:
     if not _allow(request.client.host if request.client else "unknown"):
         raise HTTPException(429, "Too many questions from this address; please wait a few minutes.")
+
+
+@app.post("/api/ask")
+def ask(body: Question, request: Request) -> dict:
+    _check_rate(request)
     result = answer(body.question)
     if result.status == "error":
         log.warning("answer failed: %s", result.message)
     return to_json(result)
+
+
+@app.post("/api/ask/stream")
+def ask_stream(body: Question, request: Request) -> StreamingResponse:
+    """The same answer as /api/ask, as newline-delimited JSON events: "retrieved", then "draft" pieces of
+    text while the model writes, then "done" with the verified answer and its confidence score."""
+    _check_rate(request)
+
+    def events():
+        try:
+            for event in answer_events(body.question):
+                if event["type"] == "done":
+                    result = event["answer"]
+                    if result.status == "error":
+                        log.warning("answer failed: %s", result.message)
+                    event = {"type": "done", "answer": to_json(result)}
+                yield json.dumps(event) + "\n"
+        except Exception:
+            # Headers are already sent, so the failure has to travel as an event.
+            log.exception("streamed answer failed")
+            yield json.dumps({"type": "error", "message": "Something went wrong on the server. Please try again."}) + "\n"
+
+    # X-Accel-Buffering: nginx would otherwise hold the pieces back until the answer is complete.
+    return StreamingResponse(events(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/info")

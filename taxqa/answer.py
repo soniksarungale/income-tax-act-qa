@@ -10,6 +10,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
+from collections.abc import Iterator
 from functools import lru_cache
 
 from taxqa import llm
@@ -166,7 +167,69 @@ def verify(raw_claims: list, hits: list[Hit]) -> list[Claim]:
     return claims
 
 
-def answer(question: str) -> Answer:
+class DraftReader:
+    """Reads the model's JSON reply while it is still being written and returns the new text of each
+    claim's "statement" and of "not_covered", so the answer can be shown as it is drafted. Only those
+    strings are read; the full reply is parsed and verified once it is complete."""
+
+    _FIELD = re.compile(r'"(statement|not_covered)"\s*:\s*"')
+    _ESCAPES = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+
+    def __init__(self):
+        self.buffer = ""
+        self.sent: dict[tuple[str, int], int] = {}
+
+    def feed(self, piece: str) -> list[dict]:
+        self.buffer += piece
+        events, statements = [], 0
+        for m in self._FIELD.finditer(self.buffer):
+            name = m.group(1)
+            index = statements if name == "statement" else 0
+            statements += name == "statement"
+            text = self._string_so_far(m.end())
+            done = self.sent.get((name, index), 0)
+            if len(text) > done:
+                self.sent[(name, index)] = len(text)
+                event = {"type": "draft", "field": name, "text": text[done:]}
+                if name == "statement":
+                    event["claim"] = index
+                events.append(event)
+        return events
+
+    def _string_so_far(self, start: int) -> str:
+        # Decodes a JSON string from start up to its closing quote or the end of what has arrived,
+        # stopping before an escape sequence that is not complete yet.
+        out, i, buf = [], start, self.buffer
+        while i < len(buf):
+            ch = buf[i]
+            if ch == '"':
+                break
+            if ch != "\\":
+                out.append(ch)
+                i += 1
+                continue
+            if i + 1 >= len(buf):
+                break
+            code = buf[i + 1]
+            if code == "u":
+                if i + 6 > len(buf):
+                    break
+                try:
+                    out.append(chr(int(buf[i + 2:i + 6], 16)))
+                except ValueError:
+                    pass
+                i += 6
+            else:
+                out.append(self._ESCAPES.get(code, code))
+                i += 2
+        return "".join(out)
+
+
+def answer_events(question: str) -> Iterator[dict]:
+    """The answer as a sequence of events, for streaming:
+    {"type": "retrieved", ...} once the extracts are found, then "draft" events with the text of the
+    answer as the model writes it ("restart" if the reply has to be asked for again), and finally
+    {"type": "done", "answer": Answer} after every citation has been checked."""
     question = question.strip()
     name, edition = document()
     result = Answer(question, "refused", document=name, edition=edition)
@@ -176,18 +239,28 @@ def answer(question: str) -> Answer:
     hits = expand(result.retrieved, {r.number for r in section_refs(question)})
     result.retrieval_ms = int((time.monotonic() - started) * 1000)
     result.sources = hits
+    yield {"type": "retrieved", "extracts": len(hits),
+           "sections": list(dict.fromkeys(h.ref.split("(")[0].split(",")[0] for h in hits)),
+           "ms": result.retrieval_ms}
     if not hits:
         result.message = "Nothing in the Act matched this question."
-        return result
+        yield {"type": "done", "answer": result}
+        return
 
     prompt = build_prompt(question, hits)
     data = None
     for attempt in range(2):
+        if attempt:
+            yield {"type": "restart"}
+        reader = DraftReader()
         try:
-            reply = llm.complete(SYSTEM_PROMPT, prompt)
+            reply = llm.stream(SYSTEM_PROMPT, prompt)
+            for piece in reply:
+                yield from reader.feed(piece)
         except llm.LLMError as e:
             result.status, result.message = "error", str(e)
-            return result
+            yield {"type": "done", "answer": result}
+            return
         result.model = reply.model
         result.llm_ms += reply.ms
         try:
@@ -197,7 +270,8 @@ def answer(question: str) -> Answer:
             prompt += "\n\nYour previous reply was not valid JSON. Reply with the JSON object only."
     if data is None:
         result.status, result.message = "error", "The model's reply could not be read. Please try again."
-        return result
+        yield {"type": "done", "answer": result}
+        return
 
     result.not_covered = str(data.get("not_covered") or "").strip()
     raw_claims = data.get("claims") if isinstance(data.get("claims"), list) else []
@@ -215,4 +289,11 @@ def answer(question: str) -> Answer:
         result.status = "partial"
     else:
         result.status = "answered"
-    return result
+    yield {"type": "done", "answer": result}
+
+
+def answer(question: str) -> Answer:
+    for event in answer_events(question):
+        if event["type"] == "done":
+            return event["answer"]
+    raise RuntimeError("answer_events ended without a result")
