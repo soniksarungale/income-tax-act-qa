@@ -74,3 +74,9 @@ def test_stream_is_rate_limited_and_validated(client, monkeypatch):
     monkeypatch.setattr(app_module, "RATE_LIMIT", 1)
     assert client.post("/api/ask/stream", json={"question": "Is HRA exempt?"}).status_code == 200
     assert client.post("/api/ask/stream", json={"question": "Is HRA exempt?"}).status_code == 429
+
+
+def test_page_and_assets_are_revalidated_after_a_deploy(client):
+    for path in ("/", "/static/app.js", "/static/style.css"):
+        res = client.get(path)
+        assert res.status_code == 200 and res.headers["cache-control"] == "no-cache"

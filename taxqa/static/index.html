@@ -7,39 +7,42 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header>
-    <h1>Income-tax Act QA</h1>
-    <p class="lede">Ask a question about the Income-tax Act, 1961. Answers are drawn only from the text of
-      the Act, with the section, sub-section, clause and page for every point.</p>
-    <p class="edition" id="edition">Loading the document details...</p>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <div class="brand">Income-tax Act QA</div>
+        <div class="edition" id="edition">Income-tax Act, 1961</div>
+      </div>
+      <button type="button" id="new-chat" class="link-button" hidden>New conversation</button>
+    </div>
   </header>
 
-  <main>
-    <form id="ask">
-      <label for="question">Your question</label>
-      <textarea id="question" rows="4" maxlength="1000" required
-        placeholder="e.g. Can I claim a deduction for interest paid on a housing loan for a let-out property?"></textarea>
-      <div class="row">
-        <button type="submit" id="submit">Ask</button>
-        <span class="hint">Ctrl + Enter to send</span>
-      </div>
-      <div class="examples">
-        <span>Try:</span>
-        <button type="button" class="example">I own a residential property that I have rented out. Can I claim a 30% deduction on the annual value of the property? I also have a housing loan on this property. Can I claim a deduction for the interest paid on the loan? Which sections of the Income-tax Act apply?</button>
-        <button type="button" class="example">Is tuition fees paid for children deductible?</button>
-        <button type="button" class="example">What is the penalty for not deducting TDS?</button>
-        <button type="button" class="example">What is the GST rate on restaurant services?</button>
-      </div>
-    </form>
-
-    <section id="status" class="status" hidden></section>
-    <section id="result" hidden></section>
+  <main id="thread" class="thread" aria-live="polite">
+    <section id="intro" class="intro">
+      <h1>Research the Income-tax Act, 1961</h1>
+      <p>Answers are drawn only from the text of the Act. Every point cites the section, sub-section or
+        clause and the page of the official PDF, and each citation is checked against the Act before the
+        answer is shown. Where the Act does not answer a question, the tool says so.</p>
+      <h2>Sample questions</h2>
+      <ul class="samples">
+        <li><button type="button" class="sample">I own a residential property that I have rented out. Can I claim a 30% deduction on the annual value of the property? I also have a housing loan on this property. Can I claim a deduction for the interest paid on the loan? Which sections of the Income-tax Act apply?</button></li>
+        <li><button type="button" class="sample">Is tuition fees paid for children deductible?</button></li>
+        <li><button type="button" class="sample">What is the penalty for not deducting TDS?</button></li>
+        <li><button type="button" class="sample">What is the GST rate on restaurant services?</button></li>
+      </ul>
+      <p class="fineprint">Not legal or tax advice. The Income-tax Act, 2025 replaces this Act from tax year
+        2026-27; this tool covers the 1961 Act, which applies to income up to financial year 2025-26.</p>
+    </section>
   </main>
 
-  <footer>
-    <p>Not legal or tax advice. The Income-tax Act, 2025 replaces this Act from tax year 2026-27; this tool
-      covers the 1961 Act, which applies to income up to financial year 2025-26. Page numbers are those of
-      the official PDF published by the Income Tax Department.</p>
+  <footer class="composer">
+    <form id="ask" class="composer-inner">
+      <label for="question" class="visually-hidden">Your question</label>
+      <textarea id="question" rows="1" maxlength="1000" required
+        placeholder="Ask a question about the Act"></textarea>
+      <button type="submit" id="submit">Ask</button>
+    </form>
+    <p class="composer-hint">Each question is answered on its own. Enter to send, Shift + Enter for a new line.</p>
   </footer>
   <script src="/static/app.js"></script>
 </body>

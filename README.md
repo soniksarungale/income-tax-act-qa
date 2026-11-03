@@ -2,8 +2,8 @@
 
 Ask a question about India's Income-tax Act, 1961 in plain English and get an answer drawn only from
 the text of the Act. Every point in the answer cites the section, sub-section or clause it rests on,
-the document and the PDF page, and the server checks each citation against the Act's text before
-showing it.
+the document and the PDF page. The answer streams in as it is written, and the server then checks each
+citation against the Act's text before the answer is presented as verified, with a confidence score.
 
 Live demo: https://taxqa.soniksarungale.com
 
@@ -71,7 +71,7 @@ four steps:
 | Keyword search | Postgres full-text (`tsvector`) weighted by term rarity | Legal questions often hinge on exact words ("tuition fees", "borrowed capital") | BM25 in Elasticsearch/OpenSearch: too heavy for this server |
 | Embeddings | `BAAI/bge-small-en-v1.5` via fastembed (ONNX, quantised, 384 dimensions) | Runs locally on CPU without PyTorch, no API key, about 290 MB for the whole app process | Hosted embedding APIs (need a key and send the Act out on every ingest); bge-base (better, but about twice the memory on a 2 GB server) |
 | LLM | Pluggable; default is the Claude Code CLI (Sonnet) | Strong at following "use only these extracts" and returning strict JSON. The CLI uses the server's existing login, so no key is stored | OpenAI, Anthropic and Gemini HTTP APIs are implemented and selected in `.env` |
-| Frontend | Plain HTML, CSS and JavaScript | The brief asks for a simple interface; no build step | React (adds a toolchain for one page) |
+| Frontend | Plain HTML, CSS and JavaScript, chat layout | The brief asks for a simple interface; no build step. Answers read like an advisory note: numbered points, citation under each, quotes indented | React (adds a toolchain for one page) |
 | Deployment | Docker (Postgres), pm2 (app), nginx + Let's Encrypt | Matches the other services on the host | |
 
 Trade-offs worth stating:
@@ -100,6 +100,7 @@ flowchart LR
     S --> X[expand<br/>whole provision or hit + parents<br/>+ referenced sub-sections]
     X --> L[llm.py<br/>JSON claims with<br/>labels + quotes]
     L --> V[answer.py<br/>verify every citation]
+    L -. draft text, streamed .-> UI
     V --> K[confidence.py]
     K --> UI[Web UI<br/>answer, references,<br/>links to PDF page]
   end
@@ -214,6 +215,15 @@ that clause, not the proviso. The outcome:
   no answer is presented as fact;
 - **error**: the model was unavailable or its reply was not valid JSON twice.
 
+### Streaming
+
+Every provider streams its reply (`--output-format stream-json` for the CLI, server-sent events for the
+HTTP APIs). The reply is JSON, so the server reads the `statement` and `not_covered` strings out of the
+partial JSON as it arrives (`DraftReader` in `answer.py`) and sends just that text to the page, where it
+appears as a draft. Verification and the confidence score need the whole reply, so they run once it is
+complete, and the page then replaces the draft with the checked answer. The first words appear about
+two seconds after the question is sent instead of after the full answer, which takes 5-10 s.
+
 ### Reducing hallucination, summarised
 
 - Retrieval decides which provisions are considered; the model never picks sections from memory.
@@ -323,6 +333,16 @@ uv run uvicorn taxqa.app:app --port 4700
 - `POST /api/ask` with `{"question": "..."}` (3-1000 characters) returns the status, claims with
   citations, what is not covered, the confidence score and its components, the cited extracts and
   timings. Limited to 10 questions per client address per 10 minutes.
+- `POST /api/ask/stream`, same input and limit, returns newline-delimited JSON events, used by the web
+  page: `retrieved` (extract count and sections), `draft` pieces of each point's text as the model writes
+  it, `restart` if the reply has to be requested again, and finally `done` with the same object as
+  `/api/ask`, verified and scored. For example:
+
+  ```
+  {"type": "retrieved", "extracts": 58, "sections": ["Section 80C", ...], "ms": 151}
+  {"type": "draft", "field": "statement", "claim": 0, "text": "Yes, under Section 80C(2)"}
+  {"type": "done", "answer": {"status": "answered", "claims": [...], "confidence": {...}, ...}}
+  ```
 - `GET /api/info`: document, edition and LLM provider.
 - `GET /act.pdf`: the Act PDF, with range requests, so `act.pdf#page=92` opens quickly.
 
@@ -344,18 +364,22 @@ Four questions asked once on the live site, with full outputs in [docs/samples.m
 
 | Question | Status | Sections cited | Claims verified |
 |---|---|---|---|
-| Rented house: 30% deduction and loan interest (the brief's example) | partial | 22, 23(1)(b), 24, 24(a), 24(b), 24(b) Explanation | 4/5 |
-| Is tuition fees paid for children deductible? | answered | 80C(1), 80C(2)(xvii), 80C(4)(c) | 4/4 |
-| What is the penalty for not deducting TDS? | answered | 271C(1)(a), 271C(1)(b), 271C(2) and proviso, 271H(1), 271H(2) | 4/4 |
+| Rented house: 30% deduction and loan interest (the brief's example) | answered, high | 22, 23(1)(a), 23(1)(b), 23(2), 23(3)(a), 24, 24(a), 24(b) with first proviso and Explanation, 80EE(4), 80EEA(4) | 7/7 |
+| Is tuition fees paid for children deductible? | answered, medium | 80C(1), 80C(2)(xvii), 80C(4)(c) | 3/3 |
+| What is the penalty for not deducting TDS? | answered, high | 271C(1)(a), 271C(1), 271C(2) and first proviso | 3/3 |
 | What is the GST rate on restaurant services? | refused | - | - |
 
-In the first answer one point was flagged because its quote came from the extract's context line
-rather than the cited text; [docs/samples.md](docs/samples.md) explains it.
+An earlier round of the same questions had the first answer only partly verified (4/5);
+[docs/samples.md](docs/samples.md) explains why.
 
 ![Answer to the brief's example question](docs/screenshots/house-property.png)
 
-More screenshots in [docs/screenshots](docs/screenshots): the refusal, the other two answers and the
-page on a phone.
+The answer streams in while the model writes it, marked as a draft until the citations are checked:
+
+![Answer being drafted](docs/screenshots/streaming-draft.png)
+
+More in [docs/screenshots](docs/screenshots): the start page, the refusal, the TDS answer and the page
+on a phone.
 
 ### Automated tests
 
@@ -371,10 +395,12 @@ uv run pytest
 - **Retrieval tests on the real index** (skipped if it is not loaded): the expected sections for seven
   questions, including the brief's example; named-section lookup; context expansion.
 - **Answer and verification tests** with a stubbed model: verified, flagged and refused claims, fenced
-  JSON, retry on a bad reply, provider errors.
-- **Provider tests** with stubbed subprocess and HTTP calls: CLI flags, one call at a time, queue
-  limit, request formats, error messages, keys never in URLs.
-- **Confidence and API tests**: score components, response shape, validation, rate limit.
+  JSON, retry on a bad reply, provider errors, the order of streamed events, and reading draft text
+  from partial JSON (escapes split across pieces).
+- **Provider tests** with stubbed subprocess and HTTP calls: CLI flags, streamed pieces, one call at a
+  time, queue limit, request formats and event parsing for each API, error messages, keys never in URLs.
+- **Confidence and API tests**: score components, response shape, the streamed event sequence and its
+  headers, validation, rate limit.
 
 ### Evaluation
 
@@ -417,7 +443,11 @@ would be the honest next test.
   citation links to the page.
 - A question that needs many long provisions at once can exceed the 24,000-character context, in which
   case lower-ranked provisions are left out.
-- With the CLI provider, questions are answered one at a time (about 7-12 s each).
+- With the CLI provider, questions are answered one at a time (about 5-10 s each; text starts to
+  appear after about two seconds).
+- A drafted point can still be dropped or flagged once checked, so the draft is labelled as such until
+  the verified answer replaces it.
+- Each question is answered on its own; the chat does not carry context from earlier questions.
 
 ### Possible improvements
 
@@ -427,6 +457,6 @@ would be the honest next test.
 - Index the Income-tax Act, 2025 and route questions by tax year.
 - Follow cross-references to other sections ("referred to in section 80CCD") during context expansion.
 - A larger, independently written evaluation set, including adversarial questions.
-- Accept a quote from the opening words of the sub-section a cited clause belongs to (as in sample 1,
-  "The provisions of sub-section (2) shall not apply if" for clause 23(3)(a)), since those words are
-  part of the clause's sentence; provisos would still be checked against their own text.
+- Accept a quote from the opening words of the sub-section a cited clause belongs to (for clause
+  23(3)(a), "The provisions of sub-section (2) shall not apply if"), since those words are part of the
+  clause's sentence; provisos would still be checked against their own text.
